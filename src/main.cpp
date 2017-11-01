@@ -45,9 +45,23 @@ namespace
 
 int main()
 {
+  Vehicle v1(0.0, 0.0, 0.0, 6.0, 0.0, 0.0);
+  Vehicle v2(0.0, 0.0, 0.0, 6.0, 0.0, 0.0);
+  v1.bounds[0] << 2114.72, 1461.1;
+  v1.bounds[1] << 2115.13, 1464.07;
+  v1.bounds[2] << 2109.76, 1461.79;
+  v1.bounds[3] << 2110.18, 1464.76;
+
+  v2.bounds[0] << 2115.03, 1462.28;
+  v2.bounds[1] << 2115.4, 1465.25;
+  v2.bounds[2] << 2110.07, 1462.9;
+  v2.bounds[3] << 2110.44, 1465.88;
+  std::cout << v1.isCollidingWith(v2) << std::endl;
+
+
   uWS::Hub h;
   Map map("../data/highway_map.csv");
-  VehiclePathPlanner planner(map, 100.0, Tools::mph2mps(49.5));
+  VehiclePathPlanner planner(map, 50.0, Tools::mph2mps(49.0), 0.224, 1.2);
   static int lane = 1;
   static double refV = 0.0;
 

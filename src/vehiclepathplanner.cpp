@@ -2,80 +2,159 @@
 #include "vehiclepathplanner.h"
 #include "spline.h"
 #include "tools.h"
+#include <map>
+#include <iostream>
 
-VehiclePathPlanner::VehiclePathPlanner(const Map &map, double planningHorizon, double speedLimit)
+VehiclePathPlanner::VehiclePathPlanner(const Map &map, int horizon, double speedLimit, double accelerationLimit, double roadFriction)
   : mMap(map)
-  , mCar(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+  , mCar(0.0, 0.0, 0.0, 6.0, 0.0, 0.0)
   , mObstacles()
-  , mPlanningHorizon(planningHorizon)
-  , mSpeedLimit(speedLimit)
-  , mTargetSpeed(speedLimit)
-  , mTargetLane(mCar.getLane())
+  , mHorizon(horizon)
+  , mMaxV(speedLimit)
+  , mMaxA(accelerationLimit)
+  , mRoadFriction(roadFriction)
+  , mBehavior(FollowingLane, speedLimit, mCar.getLane())
 {
 
 }
 
+
 void VehiclePathPlanner::updateState(const Vehicle &car, const std::vector<Vehicle> &obstacles)
 {
+  // Maps lane index to obstacle vehicles
+  typedef std::map<int, Vehicle*> TNextVehicles;
+
+  // Update car and obstacles
   mCar = car;
   mObstacles = obstacles;
+  int carLane = mCar.getLane();
 
-  // Check for collision with car ahead
-  // Plan motion using target lane and speed
-  mTargetLane = mCar.getLane();
-  bool too_close = false;
-  for (int i = 0; i < mObstacles.size(); ++i)
+
+  // Determine new car behavior
+  double safetyDistance = mCar.getSafetyDistance(mRoadFriction);
+  double approachDistance = safetyDistance;
+  double dt = mCar.trajectory.size() * 0.02;
+
+  // Determine lane speed for all lanes
+  double followLaneSpeed = std::min(mCar.v + mMaxA, mMaxV);
+  TNextVehicles nextCars;
+  for (int i = 0; i < obstacles.size(); ++i)
   {
-    if (mObstacles[i].getLane() == mTargetLane)
+    double obstacleS = mObstacles[i].s  + mObstacles[i].v * dt;
+    int obstacleLane = mObstacles[i].getLane();
+    TNextVehicles::const_iterator nc = nextCars.find(obstacleLane);
+    if (obstacleS > mCar.s && obstacleS < mCar.s + safetyDistance + approachDistance
+        && (nc == nextCars.end() || nc->second->s > mObstacles[i].s))
     {
-      double checkSpeed = mObstacles[i].v;
-      double checkCarS = mObstacles[i].s + 0.02 * mCar.trajectory.size() * checkSpeed;
-      if (checkCarS > mCar.s && checkCarS - mCar.s < 30)
+      nextCars[obstacleLane] = &mObstacles[i];
+    }
+  }
+
+  // List of possible behaviours
+  std::vector<VehicleBehavior> behaviors;
+
+  // Check for car ahead on same lane
+  TNextVehicles::const_iterator nc = nextCars.find(carLane);
+  if (nc != nextCars.end() && nc->second->v < mMaxV)
+  {
+    double actualDistance = nc->second->s + nc->second->v * dt - mCar.s;
+    std::cout << "Dist: " << actualDistance << std::endl;
+    if (actualDistance < safetyDistance + approachDistance)
+    {
+      // Add follow car behavior
+      double followCarSpeed = calculateApproachSpeed(mCar.v, nc->second->v, actualDistance - safetyDistance, approachDistance);
+      behaviors.push_back(VehicleBehavior(FollowingCar, followCarSpeed, carLane));
+
+      // Add left lane change behaviour
+      if (carLane > 0)
       {
-        too_close = true;
-        if (mTargetLane > 0)
+        double newLaneSpeed = followLaneSpeed;
+        nc = nextCars.find(carLane - 1);
+        if (nc != nextCars.end())
         {
-          --mTargetLane;
+          actualDistance = nc->second->s + nc->second->v * dt - mCar.s;
+          newLaneSpeed = calculateApproachSpeed(mCar.v, nc->second->v, actualDistance - safetyDistance, approachDistance);
         }
-        else
+        behaviors.push_back(VehicleBehavior(ChangingLaneLeft, newLaneSpeed, carLane - 1));
+      }
+
+      // Add right lane change behaviour
+      if (carLane < 2)
+      {
+        double newLaneSpeed = followLaneSpeed;
+        nc = nextCars.find(carLane + 1);
+        if (nc != nextCars.end())
         {
-          ++mTargetLane;
+          actualDistance = nc->second->s + nc->second->v * dt - mCar.s;
+          newLaneSpeed = calculateApproachSpeed(mCar.v, nc->second->v, actualDistance - safetyDistance, approachDistance);
         }
-        break;
+        behaviors.push_back(VehicleBehavior(ChangingLaneRight, newLaneSpeed, carLane + 1));
       }
     }
   }
 
-  if (too_close)
+  if (behaviors.empty())
   {
-    mTargetSpeed -= 0.224;
+    // Add default lane following behavior
+    behaviors.push_back(VehicleBehavior(FollowingLane, followLaneSpeed, carLane));
   }
-  else if (mTargetSpeed < mSpeedLimit)
+
+  // Select best behavior
+  VehicleBehavior *bestBehavior = 0;
+  for (int i = 0; i < behaviors.size(); ++i)
   {
-    mTargetSpeed += 0.224;
+    behaviors[i].targetTrajectory = calculateTrajectory(behaviors[i], mHorizon);
+    behaviors[i].cost = calculateCost(behaviors[i]);
+    if (bestBehavior == 0 || bestBehavior->cost > behaviors[i].cost)
+    {
+      bestBehavior = &behaviors[i];
+    }
   }
+  for (int i = 0; i < behaviors.size(); ++i)
+  {
+    std::cout << "[id: " << behaviors[i].id << ", cost: " << behaviors[i].cost << "] ";
+  }
+  std::cout << std::endl;
+  assert(bestBehavior);
+  mBehavior = *bestBehavior;
 }
+
 
 Trajectory VehiclePathPlanner::getTrajectory() const
 {
   Trajectory trajectory;
 
-  // Generate base trajectory section from history
+  // Recreate base trajectory section from history
   for(int i = 0; i < mCar.trajectory.size(); ++i)
   {
     trajectory.x.push_back(mCar.trajectory.x[i]);
     trajectory.y.push_back(mCar.trajectory.y[i]);
   }
 
+  // Fill up remainder of trajectory from behavior
+  for(int i = 0; i < std::min(mHorizon - mCar.trajectory.size(), mBehavior.targetTrajectory.size()); ++i)
+  {
+    trajectory.x.push_back(mBehavior.targetTrajectory.x[i]);
+    trajectory.y.push_back(mBehavior.targetTrajectory.y[i]);
+  }
+  return trajectory;
+}
+
+
+Trajectory VehiclePathPlanner::calculateTrajectory(const VehicleBehavior &behavior, int horizon) const
+{
+  Trajectory trajectory;
+
   // Generate sparse trajectory (past two points)
   std::vector<double> ptsX;
   std::vector<double> ptsY;
-  int histLen = trajectory.size();
+  double sparseStep = 30.0;
+  int histLen = mCar.trajectory.size();
   if (histLen < 2)
   {
      // No history, backtrace one step from current state
-    double prevCarX = mCar.x - 30 * cos(mCar.yaw);
-    double prevCarY = mCar.y - 30 * sin(mCar.yaw);
+    double prevCarX = mCar.x - sparseStep * cos(mCar.yaw);
+    double prevCarY = mCar.y - sparseStep * sin(mCar.yaw);
     ptsX.push_back(prevCarX);
     ptsY.push_back(prevCarY);
     ptsX.push_back(mCar.x);
@@ -84,8 +163,8 @@ Trajectory VehiclePathPlanner::getTrajectory() const
   else
   {
     // Use end of history
-    double refXPrev = trajectory.x[histLen - 2];
-    double refYPrev = trajectory.y[histLen - 2];
+    double refXPrev = mCar.trajectory.x[histLen - 2];
+    double refYPrev = mCar.trajectory.y[histLen - 2];
     ptsX.push_back(refXPrev);
     ptsY.push_back(refYPrev);
     ptsX.push_back(mCar.x);
@@ -93,11 +172,10 @@ Trajectory VehiclePathPlanner::getTrajectory() const
   }
 
   // Generate sparse trajectory (future three points)
-  double dist_inc = 30;
   for(int i = 0; i < 3; ++i)
   {
-    double s = mCar.s + (i + 1) * dist_inc;
-    double d = 2.0 + 4.0 * mTargetLane;
+    double s = mCar.s + (i + 1) * sparseStep;
+    double d = 2.0 + 4.0 * behavior.targetLane;
     std::vector<double> xy = mMap.getXY(s, d);
     ptsX.push_back(xy[0]);
     ptsY.push_back(xy[1]);
@@ -106,43 +184,81 @@ Trajectory VehiclePathPlanner::getTrajectory() const
   // Convert trajectory to vehicle coordinate system
   for(int i = 0; i < ptsX.size(); ++i)
   {
-    double shiftX = ptsX[i] - mCar.x;
-    double shiftY = ptsY[i] - mCar.y;
-    ptsX[i] = shiftX * cos(-mCar.yaw) - shiftY * sin(-mCar.yaw);
-    ptsY[i] = shiftX * sin(-mCar.yaw) + shiftY * cos(-mCar.yaw);
+    mCar.mapToVehicleCoordinates(ptsX[i], ptsY[i]);
   }
 
-  // Match spline poly
+  // Match splines
   tk::spline fSpline;
   fSpline.set_points(ptsX, ptsY);
 
-  // Fill up remainder of trajectory
-  double targetX = 30.0;
+  // Fill trajectory
+  double targetX = sparseStep;
   double targetY = fSpline(targetX);
   double targetDist = Tools::distance(0, 0, targetX, targetY);
   double xAddon = 0;
 
-  for (int i = 1; i <=  50 - histLen; ++i)
+  for (int i = 0; i < horizon; ++i)
   {
-    double N = targetDist / (0.02 * mTargetSpeed);
+    // Approximate point distance based on v
+    double N = targetDist / (0.02 * behavior.targetSpeed);
     double xPoint = xAddon + targetX / N;
     double yPoint = fSpline(xPoint);
-
     xAddon = xPoint;
 
-    double xRef = xPoint;
-    double yRef = yPoint;
-
     // Transfer back to map coordinate system
-    xPoint = xRef * cos(mCar.yaw) - yRef * sin(mCar.yaw);
-    yPoint = xRef * sin(mCar.yaw) + yRef * cos(mCar.yaw);
-    xPoint += mCar.x;
-    yPoint += mCar.y;
+    mCar.vehicleToMapCoordinates(xPoint, yPoint);
 
+    // Add to output
     trajectory.x.push_back(xPoint);
     trajectory.y.push_back(yPoint);
   }
-
-
   return trajectory;
 }
+
+
+double VehiclePathPlanner::calculateCost(const VehicleBehavior &behavior) const
+{
+  double cost = 0.0;
+
+  // Collision cost
+  const Trajectory &t = behavior.targetTrajectory;
+  bool isColliding = false;
+  for (int i = 0; i < t.size() && !isColliding < 0; ++i)
+  {
+    // Setup future car
+    double futureYaw = (i == 0) ? mCar.yaw : Tools::vangle(t.x[i] - t.x[i - 1], t.y[i] - t.y[i - 1]);
+    Vehicle futureCar(t.x[i], t.y[i], 0.0, 0.0, futureYaw, behavior.targetSpeed);
+
+    // Predict future obstacles
+    double futureTime = (mCar.trajectory.size() + i) * 0.02;
+    for (int j = 0; j < mObstacles.size() && !isColliding; ++j)
+    {
+      Vehicle futureObstacle = mObstacles[j].predict(mMap, futureTime);
+      if (futureCar.isCollidingWith(futureObstacle))
+      {
+        cost += 100.0 / (futureTime * futureTime);
+        isColliding=  true;
+      }
+    }
+  }
+
+  // Efficiency cost
+  cost += std::abs(mMaxV - behavior.targetSpeed);
+  return cost;
+}
+
+
+double VehiclePathPlanner::calculateApproachSpeed(double ownV, double otherV, double curDist, double minDist) const
+{
+  double desiredV = otherV;
+  if (curDist > 0)
+  {
+    desiredV += curDist / minDist * (ownV - otherV);
+  }
+  else
+  {
+    desiredV += curDist / minDist * std::max(mMaxA, ownV - otherV);
+  }
+  return std::min(ownV + mMaxA, std::max(ownV - mMaxA, desiredV));
+}
+

@@ -3,6 +3,10 @@
 
 #include <vector>
 #include <assert.h>
+#include "Eigen-3.3/Eigen/Core"
+#include "Eigen-3.3/Eigen/QR"
+
+class Map;
 
 struct Trajectory
 {
@@ -22,7 +26,11 @@ public:
           const Trajectory &trajectoryPath = Trajectory(), double trajectoryS = 0.0, double trajectoryD = 0.0);
 
 public:
-  double getDistanceTo(const Vehicle &other) const;
+  void vehicleToMapCoordinates(double &inOutX, double &inOutY) const;
+  void mapToVehicleCoordinates(double &inOutX, double &inOutY) const;
+  Vehicle predict(const Map &map, double dt) const;
+  double getSafetyDistance(double friction) const;
+  bool isCollidingWith(const Vehicle &other) const;
   int getLane() const;
 
 public:
@@ -33,6 +41,9 @@ public:
   double yaw;
   double v;
   Trajectory trajectory;
+  Eigen::Vector2d bounds[4];
+  double radiusX;
+  double radiusY;
 };
 
 #endif // VEHICLE_H
