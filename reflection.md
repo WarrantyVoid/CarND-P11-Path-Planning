@@ -86,6 +86,6 @@ Regardless of the excessively large scope of the project, and despite the only v
 
 Here's a video of some successful lane changing maneuvers:
 
-[Vehicle driving one save lap (PathPlanning.ogv)](https://github.com/WarrantyVoid/CarND-P10-MPC/blob/master/img/PathPlanning.ogv)
+[Vehicle driving one save lap (PathPlanning.ogv)](https://github.com/WarrantyVoid/CarND-P11-Path-Planning/blob/master/img/PathPlanning.ogv)
 
 ![Screenshot of video][image1]
