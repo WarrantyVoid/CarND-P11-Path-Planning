@@ -32,18 +32,18 @@ Vehicle::Vehicle(double xPos, double yPos, double sPos, double dPos, double yawA
   }
 
   // Calc bounds in map coords
-  double x1 = -radiusX;
-  double y1 = -radiusY;
-  double x2 = radiusX;
-  double y2 = -radiusY;
-  double x3 = -radiusX;
-  double y3 = radiusY;
-  double x4 = radiusX;
-  double y4 = radiusY;
-  vehicleToMapCoordinates(x1, y1);
-  vehicleToMapCoordinates(x2, y2);
-  vehicleToMapCoordinates(x3, y3);
-  vehicleToMapCoordinates(x4, y4);
+  double x1 = d - radiusX;
+  double y1 = s - radiusY;
+  double x2 = d + radiusX;
+  double y2 = s - radiusY;
+  double x3 = d - radiusX;
+  double y3 = s + radiusY;
+  double x4 = d + radiusX;
+  double y4 = s + radiusY;
+  //vehicleToMapCoordinates(x1, y1);
+  //vehicleToMapCoordinates(x2, y2);
+  //vehicleToMapCoordinates(x3, y3);
+  //vehicleToMapCoordinates(x4, y4);
   bounds[0] << x1, y1;
   bounds[1] << x2, y2;
   bounds[2] << x3, y3;
@@ -72,18 +72,15 @@ void Vehicle::mapToVehicleCoordinates(double &inOutX, double &inOutY) const
 Vehicle Vehicle::predict(const Map &map, double dt) const
 {
   // Rudimental model-based prediction
-  double newX = x + cos(yaw) * dt;
-  double newY = y + sin(yaw) * dt;
-  double newYaw = yaw;
-  double newV = v;
-  std::vector<double> frenet = map.getFrenet(newX, newY, newYaw);
+  double newS = s + dt * v;
+  std::vector<double> xy = map.getXY(newS, d);
   Vehicle predictedVehicle(
-    newX,
-    newY,
-    frenet[0],
-    frenet[1],
-    newYaw,
-    newV);
+    xy[0],
+    xy[1],
+    newS,
+    d,
+    yaw,
+    v);
   predictedVehicle.radiusY += 0.5 * dt;
   return predictedVehicle;
 }

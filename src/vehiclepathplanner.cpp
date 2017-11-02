@@ -58,7 +58,6 @@ void VehiclePathPlanner::updateState(const Vehicle &car, const std::vector<Vehic
   if (nc != nextCars.end() && nc->second->v < mMaxV)
   {
     double actualDistance = nc->second->s + nc->second->v * dt - mCar.s;
-    std::cout << "Dist: " << actualDistance << std::endl;
     if (actualDistance < safetyDistance + approachDistance)
     {
       // Add follow car behavior
@@ -110,11 +109,19 @@ void VehiclePathPlanner::updateState(const Vehicle &car, const std::vector<Vehic
       bestBehavior = &behaviors[i];
     }
   }
+  bool printed(false);
   for (int i = 0; i < behaviors.size(); ++i)
   {
-    std::cout << "[id: " << behaviors[i].id << ", cost: " << behaviors[i].cost << "] ";
+    if (behaviors[i].id != FollowingLane)
+    {
+      //printed = true;
+      //std::cout << "[id: " << behaviors[i].id << ", v: " <<  behaviors[i].targetSpeed << ", cost: " << behaviors[i].cost << "] ";
+    }
   }
-  std::cout << std::endl;
+  if (printed)
+  {
+    std::cout << std::endl;
+  }
   assert(bestBehavior);
   mBehavior = *bestBehavior;
 }
@@ -148,13 +155,13 @@ Trajectory VehiclePathPlanner::calculateTrajectory(const VehicleBehavior &behavi
   // Generate sparse trajectory (past two points)
   std::vector<double> ptsX;
   std::vector<double> ptsY;
-  double sparseStep = 30.0;
+  double sparseStep = 25.0;
   int histLen = mCar.trajectory.size();
   if (histLen < 2)
   {
      // No history, backtrace one step from current state
-    double prevCarX = mCar.x - sparseStep * cos(mCar.yaw);
-    double prevCarY = mCar.y - sparseStep * sin(mCar.yaw);
+    double prevCarX = mCar.x - 1.0 * cos(mCar.yaw);
+    double prevCarY = mCar.y - 1.0 * sin(mCar.yaw);
     ptsX.push_back(prevCarX);
     ptsY.push_back(prevCarY);
     ptsX.push_back(mCar.x);
@@ -223,11 +230,14 @@ double VehiclePathPlanner::calculateCost(const VehicleBehavior &behavior) const
   // Collision cost
   const Trajectory &t = behavior.targetTrajectory;
   bool isColliding = false;
-  for (int i = 0; i < t.size() && !isColliding < 0; ++i)
+  for (int i = 0; i < t.size() && !isColliding; ++i)
   {
     // Setup future car
+    double futureX = t.x[i];
+    double futureY = t.y[i];
     double futureYaw = (i == 0) ? mCar.yaw : Tools::vangle(t.x[i] - t.x[i - 1], t.y[i] - t.y[i - 1]);
-    Vehicle futureCar(t.x[i], t.y[i], 0.0, 0.0, futureYaw, behavior.targetSpeed);
+    std::vector<double> futureSd = mMap.getFrenet(futureX, futureY, futureYaw);
+    Vehicle futureCar(futureX, futureY, futureSd[0], futureSd[1], futureYaw, behavior.targetSpeed);
 
     // Predict future obstacles
     double futureTime = (mCar.trajectory.size() + i) * 0.02;
@@ -237,7 +247,8 @@ double VehiclePathPlanner::calculateCost(const VehicleBehavior &behavior) const
       if (futureCar.isCollidingWith(futureObstacle))
       {
         cost += 100.0 / (futureTime * futureTime);
-        isColliding=  true;
+        //isColliding=  true;
+        //std::cout << "Collision [" << futureTime << "] lane " <<  futureCar.getLane() << ", dist: " << futureObstacle.s - futureCar.s << ", " << futureObstacle.d - futureCar.d  << std::endl;
       }
     }
   }
