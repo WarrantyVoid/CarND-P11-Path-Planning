@@ -5,6 +5,7 @@
 #include <map>
 #include <iostream>
 
+
 VehiclePathPlanner::VehiclePathPlanner(const Map &map, int horizon, double speedLimit, double accelerationLimit, double roadFriction)
   : mMap(map)
   , mCar(0.0, 0.0, 0.0, 6.0, 0.0, 0.0)
